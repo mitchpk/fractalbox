@@ -75,7 +75,7 @@ impl State {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
         };
@@ -96,7 +96,7 @@ impl State {
             label: Some("fullscreen_bind_group"),
         });
 
-        let camera = Camera::new((0.0, 0.0), 1.0);
+        let camera = Camera::new((0.0, 0.0), 0.0, 1.0);
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update(&camera);
 
@@ -265,6 +265,7 @@ impl State {
             self.size = new_size;
             self.config.width = new_size.width;
             self.config.height = new_size.height;
+            self.camera.aspect = new_size.width as f32 / new_size.height as f32;
             self.surface.configure(&self.device, &self.config);
         }
     }

@@ -6,16 +6,24 @@ use winit::event::{VirtualKeyCode, ElementState, MouseScrollDelta};
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point2<f64>,
-    zoom: f64,
+    zoom: f32,
+    zoom_target: f32,
+    pub aspect: f32,
 }
 
 impl Camera {
-    pub fn new(position: impl Into<Point2<f64>>, zoom: f64) -> Self {
+    pub fn new(position: impl Into<Point2<f64>>, zoom: f32, aspect: f32) -> Self {
         Self {
             position: position.into(),
             zoom,
+            zoom_target: zoom,
+            aspect,
         }
     }
+}
+
+fn lerp(start: f32, end: f32, percent: f32) -> f32 {
+    start + (end - start) * percent
 }
 
 #[derive(Debug)]
@@ -65,18 +73,19 @@ impl CameraController {
     }
 
     pub fn process_mouse(&mut self, scroll: MouseScrollDelta) {
-        self.amount_in = match scroll {
+        self.amount_in += match scroll {
             MouseScrollDelta::LineDelta(_, y) => y,
-            MouseScrollDelta::PixelDelta(p) => p.y as f32,
+            MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.0001,
         }
     }
 
     pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
-        let dt = dt.as_secs_f64();
-        camera.position.x += self.amount_right as f64 * self.speed * camera.zoom.exp() * dt;
-        camera.position.y += self.amount_down as f64 * self.speed * camera.zoom.exp() * dt;
+        let dt = dt.as_secs_f32();
+        camera.position.x += self.amount_right as f64 * self.speed * (-camera.zoom as f64).exp() * dt as f64;
+        camera.position.y += self.amount_down as f64 * self.speed * (-camera.zoom as f64).exp() * dt as f64;
 
-        camera.zoom += self.amount_in as f64 * 0.1;
+        camera.zoom_target += self.amount_in * 0.2;
+        camera.zoom = lerp(camera.zoom, camera.zoom_target, 5.0 * dt);
         self.amount_in = 0.0;
     }
 }
@@ -85,7 +94,8 @@ impl CameraController {
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform {
     pub pos: [f64; 2],
-    pub zoom: f64,
+    pub zoom: f32,
+    pub aspect: f32,
     pub _padding: f64,
 }
 
@@ -93,7 +103,8 @@ impl CameraUniform {
     pub fn new() -> Self {
         Self {
             pos: [0.0; 2],
-            zoom: 1.0,
+            zoom: 0.0,
+            aspect: 1.0,
             _padding: 0.0,
         }
     }
@@ -101,5 +112,6 @@ impl CameraUniform {
     pub fn update(&mut self, camera: &Camera) {
         self.pos = camera.position.into();
         self.zoom = camera.zoom;
+        self.aspect = camera.aspect;
     }
 }
