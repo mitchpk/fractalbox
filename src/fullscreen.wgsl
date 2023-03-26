@@ -44,13 +44,13 @@ fn compute_iterations(z0: vec2<f64>, constant: vec2<f64>, max_iteration: i32) ->
     var length = zn.x * zn.x + zn.y * zn.y;
     var is_inside = true;
     while iteration < max_iteration {
-        zn = compute_next(zn, constant);
-        length = zn.x * zn.x + zn.y * zn.y;
-        iteration += 1;
-        if length > f64(4.0) {
+        if length > f64(5.0) {
             is_inside = false;
             break;
         }
+        zn = compute_next(zn, constant);
+        length = zn.x * zn.x + zn.y * zn.y;
+        iteration += 1;
     }
 
     if is_inside {
@@ -70,17 +70,24 @@ fn compute_iterations(z0: vec2<f64>, constant: vec2<f64>, max_iteration: i32) ->
 
 fn get_colour(iterations: f32) -> vec3<f32> {
     return vec3<f32>(
+        iterations * 0.5,
+        iterations * 0.6,
+        iterations * 0.7,
+    );
+    /*return vec3<f32>(
         pow(cos(sqrt(iterations)*1.0 + 0.0), 2.0),
         pow(cos(sqrt(iterations)*1.0 + 120.0), 2.0),
         pow(cos(sqrt(iterations)*1.0 + 240.0), 2.0),
-    );
+    );*/
 }
 
 @fragment
 fn fs_main(in: FragmentInput) -> @location(0) vec4<f32> {
     let result = compute_iterations(
-        vec2<f64>(in.tex_coords) * f64(exp(-camera.zoom)
-    ) + camera.pos, vec2<f64>(f64(-0.79), f64(0.15)), 200);
+        vec2<f64>(f64(0.0), f64(0.0)),
+        vec2<f64>(in.tex_coords) * f64(exp(-camera.zoom)) + camera.pos,
+        200
+    );
 
     return vec4<f32>(get_colour(result), 1.0);
 }

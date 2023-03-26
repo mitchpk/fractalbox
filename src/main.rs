@@ -6,13 +6,16 @@ mod camera;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::WindowBuilder, dpi::LogicalSize,
 };
 
 fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = WindowBuilder::new()
+        .with_inner_size(LogicalSize::new(1280, 720))
+        .build(&event_loop)
+        .unwrap();
     let mut state = pollster::block_on(State::new(&window));
     let mut last_render_time = std::time::Instant::now();
     let mut focused = true;

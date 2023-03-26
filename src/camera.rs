@@ -2,19 +2,22 @@ use std::time::Duration;
 
 use cgmath::Point2;
 use winit::event::{VirtualKeyCode, ElementState, MouseScrollDelta};
+use std::ops::*;
 
 #[derive(Debug)]
 pub struct Camera {
-    pub position: Point2<f64>,
+    position: Point2<f64>,
+    position_target: Point2<f64>,
     zoom: f32,
     zoom_target: f32,
     pub aspect: f32,
 }
 
 impl Camera {
-    pub fn new(position: impl Into<Point2<f64>>, zoom: f32, aspect: f32) -> Self {
+    pub fn new(position: impl Into<Point2<f64>> + Clone, zoom: f32, aspect: f32) -> Self {
         Self {
-            position: position.into(),
+            position: position.clone().into(),
+            position_target: position.into(),
             zoom,
             zoom_target: zoom,
             aspect,
@@ -22,24 +25,33 @@ impl Camera {
     }
 }
 
-fn lerp(start: f32, end: f32, percent: f32) -> f32 {
-    start + (end - start) * percent
+fn lerp<T, F>(start: T, end: T, percent: F) -> T
+where
+    T: Clone + Add<T, Output = T> + Sub<T, Output = T> + Mul<F, Output = T>,
+{
+    start.clone() + (end - start) * percent
 }
 
 #[derive(Debug)]
 pub struct CameraController {
+    amount_left: f32,
     amount_right: f32,
+    amount_up: f32,
     amount_down: f32,
     amount_in: f32,
-    speed: f64,
+    amount_out: f32,
+    speed: f32,
 }
 
 impl CameraController {
-    pub fn new(speed: f64) -> Self {
+    pub fn new(speed: f32) -> Self {
         Self {
+            amount_left: 0.0,
             amount_right: 0.0,
+            amount_up: 0.0,
             amount_down: 0.0,
             amount_in: 0.0,
+            amount_out: 0.0,
             speed,
         }
     }
@@ -53,7 +65,7 @@ impl CameraController {
 
         match key {
             VirtualKeyCode::Up => {
-                self.amount_down = -amount;
+                self.amount_up = amount;
                 true
             }
             VirtualKeyCode::Down => {
@@ -61,32 +73,44 @@ impl CameraController {
                 true
             }
             VirtualKeyCode::Left => {
-                self.amount_right = -amount;
+                self.amount_left = amount;
                 true
             }
             VirtualKeyCode::Right => {
                 self.amount_right = amount;
                 true
             }
+            VirtualKeyCode::Q => {
+                self.amount_out = amount;
+                true
+            }
+            VirtualKeyCode::W => {
+                self.amount_in = amount;
+                true
+            }
+            VirtualKeyCode::Equals => {
+                self.speed *= 1.2;
+                true
+            }
+            VirtualKeyCode::Minus => {
+                self.speed /= 1.2;
+                true
+            }
             _ => false,
         }
     }
 
-    pub fn process_mouse(&mut self, scroll: MouseScrollDelta) {
-        self.amount_in += match scroll {
-            MouseScrollDelta::LineDelta(_, y) => y,
-            MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.0001,
-        }
-    }
+    pub fn process_mouse(&mut self, scroll: MouseScrollDelta) {}
 
     pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
         let dt = dt.as_secs_f32();
-        camera.position.x += self.amount_right as f64 * self.speed * (-camera.zoom as f64).exp() * dt as f64;
-        camera.position.y += self.amount_down as f64 * self.speed * (-camera.zoom as f64).exp() * dt as f64;
+        camera.position_target.x += ((self.amount_right - self.amount_left) * self.speed * (-camera.zoom).exp() * dt) as f64;
+        camera.position_target.y += ((self.amount_down - self.amount_up) * self.speed * (-camera.zoom).exp() * dt) as f64;
+        camera.position.x = lerp(camera.position.x, camera.position_target.x, 5.0 * dt as f64);
+        camera.position.y = lerp(camera.position.y, camera.position_target.y, 5.0 * dt as f64);
 
-        camera.zoom_target += self.amount_in * 0.2;
+        camera.zoom_target += (self.amount_in - self.amount_out) * self.speed * 0.5 * dt;
         camera.zoom = lerp(camera.zoom, camera.zoom_target, 5.0 * dt);
-        self.amount_in = 0.0;
     }
 }
 
