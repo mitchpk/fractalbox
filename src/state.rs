@@ -1,7 +1,13 @@
-use wgpu::util::DeviceExt;
-use winit::{window::Window, event::{Event, DeviceEvent, KeyboardInput, WindowEvent, ElementState}};
+use std::sync::Arc;
+
 use crate::camera::{Camera, CameraController, CameraUniform};
-use anyhow::{Result, Context};
+use anyhow::Result;
+use wgpu::{util::DeviceExt, TextureFormat};
+use winit::{
+    event::{ElementState, KeyEvent, WindowEvent},
+    keyboard::PhysicalKey,
+    window::Window,
+};
 
 const FULLSCREEN_VERTICES: &[[f32; 3]] = &[
     [-1.0, 1.0, 0.0],
@@ -12,9 +18,8 @@ const FULLSCREEN_VERTICES: &[[f32; 3]] = &[
 const FULLSCREEN_INDICES: &[u16] = &[0, 2, 1, 1, 2, 3];
 
 pub struct State {
-    instance: wgpu::Instance,
-    adapter: wgpu::Adapter,
-    surface: wgpu::Surface,
+    surface: wgpu::Surface<'static>,
+    pub window: Arc<Window>,
     pub device: wgpu::Device,
     queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
@@ -35,14 +40,17 @@ pub struct State {
 }
 
 impl State {
-    pub async fn new(window: &Window) -> Self {
+    pub async fn new(window: Window) -> Self {
+        let window = Arc::new(window);
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
-        let surface = unsafe { instance.create_surface(window).expect("failed to create surface") };
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("failed to create surface");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -55,8 +63,9 @@ impl State {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::SHADER_FLOAT64,
-                    limits: wgpu::Limits::default(),
+                    required_features: wgpu::Features::SHADER_F64,
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::Performance,
                     label: None,
                 },
                 None,
@@ -65,9 +74,11 @@ impl State {
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps.formats.iter()
+        let surface_format = surface_caps
+            .formats
+            .iter()
             .copied()
-            .filter(|f| f.describe().srgb)
+            .filter(TextureFormat::is_srgb)
             .next()
             .unwrap_or(surface_caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
@@ -78,6 +89,7 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
 
@@ -87,8 +99,7 @@ impl State {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[],
                 label: Some("fullscreen_bind_group_layout"),
-            }
-        );
+            });
 
         let fullscreen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &fullscreen_bind_group_layout,
@@ -183,7 +194,7 @@ impl State {
             layout: Some(&fullscreen_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &fullscreen_shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: (std::mem::size_of::<f32>() * 3) as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -193,16 +204,18 @@ impl State {
                         format: wgpu::VertexFormat::Float32x3,
                     }],
                 }],
+                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fullscreen_shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     // Final view
                     format: config.format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -220,6 +233,7 @@ impl State {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         });
 
         let fullscreen_vertex_buffer =
@@ -237,10 +251,9 @@ impl State {
             });
 
         return Self {
-            instance,
-            adapter,
             surface,
             device,
+            window,
             queue,
             config,
             size,
@@ -257,7 +270,7 @@ impl State {
             frame_count: 0.0,
             frame_count_buffer,
             utils_bind_group,
-        }
+        };
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -270,43 +283,31 @@ impl State {
         }
     }
 
-    pub fn input<T: std::fmt::Debug>(&mut self, event: &Event<T>) -> bool {
+    pub fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
-            Event::DeviceEvent { event, .. } => match event {
-                DeviceEvent::MouseWheel { delta } => {
-                    self.camera_controller.process_mouse(*delta);
-                    true
-                }
+            WindowEvent::MouseInput {
+                button: winit::event::MouseButton::Left,
+                state,
+                ..
+            } => {
+                self.mouse_pressed = *state == ElementState::Pressed;
+                true
+            }
 
-                _ => false,
-            },
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.camera_controller.process_mouse(*delta);
+                true
+            }
 
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::MouseInput {
-                    button: winit::event::MouseButton::Left,
-                    state,
-                    ..
-                } => {
-                    self.mouse_pressed = *state == ElementState::Pressed;
-                    true
-                }
-
-                WindowEvent::MouseWheel { delta, .. } => {
-                    self.camera_controller.process_mouse(*delta);
-                    true
-                }
-
-                WindowEvent::KeyboardInput {
-                    input: KeyboardInput {
-                        virtual_keycode: Some(key),
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(key),
                         state,
                         ..
                     },
-                    ..
-                } => self.camera_controller.process_keyboard(*key, *state),
-
-                _ => false,
-            },
+                ..
+            } => self.camera_controller.process_keyboard(*key, *state),
 
             _ => false,
         }
@@ -314,8 +315,7 @@ impl State {
 
     pub fn update(&mut self, dt: std::time::Duration) {
         self.camera_controller.update_camera(&mut self.camera, dt);
-        self.camera_uniform
-            .update(&self.camera);
+        self.camera_uniform.update(&self.camera);
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -351,10 +351,11 @@ impl State {
                             b: 0.3,
                             a: 1.0,
                         }),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: None,
+                ..Default::default()
             });
 
             fullscreen_pass.set_pipeline(&self.fullscreen_pipeline);

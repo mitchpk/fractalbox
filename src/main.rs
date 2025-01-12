@@ -1,76 +1,98 @@
 mod state;
+use std::time::Instant;
+
 use state::*;
 
 mod camera;
 
 use winit::{
+    application::ApplicationHandler,
     event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder, dpi::LogicalSize,
+    event_loop::EventLoop,
+    keyboard::{KeyCode, PhysicalKey},
+    window::Window,
 };
+
+enum App {
+    Uninitialised,
+    Initialised {
+        state: State,
+        last_render_time: Instant,
+        focused: bool,
+    },
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let window = event_loop
+            .create_window(Window::default_attributes())
+            .unwrap();
+        let state = pollster::block_on(State::new(window));
+        *self = App::Initialised {
+            state,
+            last_render_time: Instant::now(),
+            focused: true,
+        };
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        if let App::Initialised {
+            state,
+            last_render_time,
+            focused,
+        } = self
+        {
+            if state.input(&event) {
+                return;
+            }
+
+            match event {
+                WindowEvent::CloseRequested
+                | WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            state: ElementState::Pressed,
+                            physical_key: PhysicalKey::Code(KeyCode::Escape),
+                            ..
+                        },
+                    ..
+                } => event_loop.exit(),
+                WindowEvent::Resized(physical_size) => {
+                    state.resize(physical_size);
+                }
+                WindowEvent::Focused(focus) => *focused = focus,
+                WindowEvent::RedrawRequested => {
+                    state.window.request_redraw();
+                    let now = Instant::now();
+                    let dt = now - *last_render_time;
+                    *last_render_time = now;
+                    println!("{:?}", dt);
+                    //std::thread::sleep(std::time::Duration::from_millis(30));
+                    state.update(dt);
+                    match state.render() {
+                        Ok(_) => {}
+                        // Reconfigure the surface if lost
+                        Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                        // The system is out of memory, we should probably quit
+                        Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
+                        // All other errors (Outdated, Timeout) should be resolved by the next frame
+                        Err(e) => eprintln!("{:?}", e),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
 
 fn main() {
     env_logger::init();
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_inner_size(LogicalSize::new(1280, 720))
-        .build(&event_loop)
-        .unwrap();
-    let mut state = pollster::block_on(State::new(&window));
-    let mut last_render_time = std::time::Instant::now();
-    let mut focused = true;
-
-    event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
-
-        if state.input(&event) {
-            return
-        }
-
-        match event {
-            Event::WindowEvent { event, window_id } if window_id == window.id() => {
-                match event {
-                    WindowEvent::CloseRequested
-                    | WindowEvent::KeyboardInput {
-                        input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
-                                ..
-                            },
-                        ..
-                    } => *control_flow = ControlFlow::Exit,
-                    WindowEvent::Resized(physical_size) => {
-                        state.resize(physical_size);
-                    }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        state.resize(*new_inner_size);
-                    }
-                    WindowEvent::Focused(focus) => focused = focus,
-                    _ => {}
-                }
-            }
-            Event::RedrawRequested(_) => {
-                let now = std::time::Instant::now();
-                let dt = now - last_render_time;
-                last_render_time = now;
-                //std::thread::sleep(std::time::Duration::from_millis(30));
-                state.update(dt);
-                match state.render() {
-                    Ok(_) => {}
-                    // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                    // All other errors (Outdated, Timeout) should be resolved by the next frame
-                    Err(e) => eprintln!("{:?}", e),
-                }
-            }
-            Event::MainEventsCleared => {
-                // RedrawRequested will only trigger once, unless we manually request it
-                window.request_redraw();
-            }
-            _ => {}
-        }
-    });
+    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let mut app = App::Uninitialised;
+    event_loop.run_app(&mut app).expect("failure while running event loop");
 }

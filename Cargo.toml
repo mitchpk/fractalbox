@@ -12,8 +12,8 @@ cgmath = "0.18.0"
 env_logger = "0.10.0"
 log = "0.4.17"
 pollster = "0.3.0"
-wgpu = "0.15.1"
-winit = "0.28.2"
+wgpu = "23.0.1"
+winit = "0.30.8"
 
 [profile.release]
 strip = true
